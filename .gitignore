@@ -1,14 +1,76 @@
-Binaries
-DerivedDataCache
-Intermediate
-Saved
-.vscode
-.vs
+# Unreal Engine — build outputs & caches
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+Plugins/**/Binaries/
+Plugins/**/Intermediate/
+
+# Built map data
+*_BuiltData.uasset
+
+# Visual Studio / Rider / VS Code
+.vs/
+.vscode/
+.vsconfig
+*.sln
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
 *.VC.db
+*.VC.opendb
 *.opensdf
 *.opendb
 *.sdf
-*.sln
-*.suo
+.idea/
+
+# Xcode (macOS / iOS)
 *.xcodeproj
 *.xcworkspace
+*.xcuserstate
+
+# Compiled objects & libraries
+*.slo
+*.lo
+*.o
+*.obj
+*.gch
+*.pch
+*.so
+*.dylib
+*.dll
+*.mod
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+*.ipa
+
+# Build folder outputs (keep Lyra Build scripts if you add them later via negation)
+Build/*
+!Build/*/
+Build/*/**
+!Build/*/PakBlacklist*.txt
+!Build/**/*.ico
+
+# MSBuild artifacts under Build scripts
+Build/**/obj/
+Build/**/bin/
+
+# Precompiled source art
+SourceArt/**/*.png
+SourceArt/**/*.tga
+
+# Editor temp
+enc_temp_folder/
+
+# OS junk
+.DS_Store
+Thumbs.db
+Desktop.ini

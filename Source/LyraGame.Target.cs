@@ -88,7 +88,7 @@ public class LyraGameTarget : TargetRules
 				if (!bHasWarnedAboutShared)
 				{
 					bHasWarnedAboutShared = true;
-					Logger.LogWarning("LyraGameEOS and dynamic target options are disabled when packaging from an installed version of the engine");
+					Logger.LogWarning("Lyra custom config targets are disabled when packaging from an installed version of the engine");
 				}
 			}
 		}

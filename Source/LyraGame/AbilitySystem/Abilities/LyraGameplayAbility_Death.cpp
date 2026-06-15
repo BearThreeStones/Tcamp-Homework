@@ -4,8 +4,10 @@
 
 #include "AbilitySystem/Abilities/LyraGameplayAbility.h"
 #include "AbilitySystem/LyraAbilitySystemComponent.h"
+#include "Camera/LyraCameraMode.h"
 #include "Character/LyraHealthComponent.h"
 #include "LyraGameplayTags.h"
+#include "UObject/SoftObjectPath.h"
 #include "LyraLogChannels.h"
 #include "Trace/Trace.inl"
 
@@ -46,6 +48,15 @@ void ULyraGameplayAbility_Death::ActivateAbility(const FGameplayAbilitySpecHandl
 	if (!ChangeActivationGroup(ELyraAbilityActivationGroup::Exclusive_Blocking))
 	{
 		UE_LOG(LogLyraAbilitySystem, Error, TEXT("ULyraGameplayAbility_Death::ActivateAbility: Ability [%s] failed to change activation group to blocking."), *GetName());
+	}
+
+	{
+		static const TSubclassOf<ULyraCameraMode> DeathCameraMode = TSoftClassPtr<ULyraCameraMode>(
+			FSoftObjectPath(TEXT("/Game/Characters/Cameras/CM_ThirdPerson.CM_ThirdPerson_C"))).LoadSynchronous();
+		if (DeathCameraMode)
+		{
+			SetCameraMode(DeathCameraMode);
+		}
 	}
 
 	if (bAutoStartDeath)

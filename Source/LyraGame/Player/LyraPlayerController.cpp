@@ -17,6 +17,7 @@
 #include "AbilitySystemGlobals.h"
 #include "CommonInputSubsystem.h"
 #include "LyraLocalPlayer.h"
+#include "Character/LyraHealthComponent.h"
 #include "GameModes/LyraGameState.h"
 #include "Settings/LyraSettingsLocal.h"
 #include "Settings/LyraSettingsShared.h"
@@ -30,6 +31,80 @@
 #endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(LyraPlayerController)
+
+namespace LyraPlayerControllerFirstPersonVisibility
+{
+	static TAutoConsoleVariable<int32> CVarHideLocalPawnMeshForFP(
+		TEXT("lyra.FP.HideLocalPawnMesh"),
+		1,
+		TEXT("When non-zero, hides the locally controlled pawn mesh (and owned equipment) from the owning player's view."));
+
+	static bool ShouldHidePawnMeshForFirstPersonView(const ALyraPlayerController* PC)
+	{
+		if (!PC || !PC->IsLocalController())
+		{
+			return false;
+		}
+
+		if (CVarHideLocalPawnMeshForFP.GetValueOnGameThread() == 0)
+		{
+			return false;
+		}
+
+		const APawn* Pawn = PC->GetPawn();
+		if (!Pawn)
+		{
+			return false;
+		}
+
+		if (const ULyraHealthComponent* HealthComponent = ULyraHealthComponent::FindHealthComponent(Pawn))
+		{
+			if (HealthComponent->IsDeadOrDying())
+			{
+				return false;
+			}
+		}
+
+		// When enabled, hide the locally possessed pawn from the owning player's view while alive.
+		return true;
+	}
+
+	static void AddPrimitivesToHiddenSet(const AActor* Actor, TSet<FPrimitiveComponentId>& OutHiddenComponents)
+	{
+		if (!Actor)
+		{
+			return;
+		}
+
+		auto AddToHiddenComponents = [&OutHiddenComponents](const TInlineComponentArray<UPrimitiveComponent*>& InComponents)
+		{
+			for (UPrimitiveComponent* Comp : InComponents)
+			{
+				if (Comp && Comp->IsRegistered())
+				{
+					OutHiddenComponents.Add(Comp->GetPrimitiveSceneId());
+
+					// First-person hide must include weapon/equipment children even if tagged NoParentAutoHide
+					// (Lyra uses that tag to keep attachments visible during camera-penetration hiding).
+					for (USceneComponent* AttachedChild : Comp->GetAttachChildren())
+					{
+						if (UPrimitiveComponent* AttachChildPC = Cast<UPrimitiveComponent>(AttachedChild))
+						{
+							if (AttachChildPC->IsRegistered())
+							{
+								OutHiddenComponents.Add(AttachChildPC->GetPrimitiveSceneId());
+							}
+						}
+					}
+				}
+			}
+		};
+
+		TInlineComponentArray<UPrimitiveComponent*> ActorComponents;
+		Actor->GetComponents(ActorComponents);
+		AddToHiddenComponents(ActorComponents);
+	}
+}
 
 namespace Lyra
 {
@@ -474,53 +549,43 @@ void ALyraPlayerController::UpdateHiddenComponents(const FVector& ViewLocation, 
 {
 	Super::UpdateHiddenComponents(ViewLocation, OutHiddenComponents);
 
-	if (bHideViewTargetPawnNextFrame)
-	{
-		AActor* const ViewTargetPawn = PlayerCameraManager ? Cast<AActor>(PlayerCameraManager->GetViewTarget()) : nullptr;
-		if (ViewTargetPawn)
-		{
-			// internal helper func to hide all the components
-			auto AddToHiddenComponents = [&OutHiddenComponents](const TInlineComponentArray<UPrimitiveComponent*>& InComponents)
-			{
-				// add every component and all attached children
-				for (UPrimitiveComponent* Comp : InComponents)
-				{
-					if (Comp->IsRegistered())
-					{
-						OutHiddenComponents.Add(Comp->GetPrimitiveSceneId());
+	const bool bHideForFirstPerson = LyraPlayerControllerFirstPersonVisibility::ShouldHidePawnMeshForFirstPersonView(this);
+	const bool bHideForPenetration = bHideViewTargetPawnNextFrame;
 
-						for (USceneComponent* AttachedChild : Comp->GetAttachChildren())
-						{
-							static FName NAME_NoParentAutoHide(TEXT("NoParentAutoHide"));
-							UPrimitiveComponent* AttachChildPC = Cast<UPrimitiveComponent>(AttachedChild);
-							if (AttachChildPC && AttachChildPC->IsRegistered() && !AttachChildPC->ComponentTags.Contains(NAME_NoParentAutoHide))
-							{
-								OutHiddenComponents.Add(AttachChildPC->GetPrimitiveSceneId());
-							}
-						}
+	if (bHideForFirstPerson || bHideForPenetration)
+	{
+		AActor* const ViewTargetPawn = bHideForFirstPerson
+			? GetPawn()
+			: (PlayerCameraManager ? Cast<AActor>(PlayerCameraManager->GetViewTarget()) : nullptr);
+
+		if (ViewTargetPawn && (bHideForFirstPerson || ViewTargetPawn == GetPawn()))
+		{
+			LyraPlayerControllerFirstPersonVisibility::AddPrimitivesToHiddenSet(ViewTargetPawn, OutHiddenComponents);
+
+			TArray<AActor*> AttachedActors;
+			ViewTargetPawn->GetAttachedActors(AttachedActors, /*bResetArray=*/true, /*bRecursivelyIncludeAttachedActors=*/true);
+			for (AActor* AttachedActor : AttachedActors)
+			{
+				LyraPlayerControllerFirstPersonVisibility::AddPrimitivesToHiddenSet(AttachedActor, OutHiddenComponents);
+			}
+
+			if (UWorld* World = GetWorld())
+			{
+				for (TActorIterator<AActor> It(World); It; ++It)
+				{
+					AActor* OwnedActor = *It;
+					if (OwnedActor && OwnedActor->GetOwner() == ViewTargetPawn)
+					{
+						LyraPlayerControllerFirstPersonVisibility::AddPrimitivesToHiddenSet(OwnedActor, OutHiddenComponents);
 					}
 				}
-			};
-
-			//TODO Solve with an interface.  Gather hidden components or something.
-			//TODO Hiding isn't awesome, sometimes you want the effect of a fade out over a proximity, needs to bubble up to designers.
-
-			// hide pawn's components
-			TInlineComponentArray<UPrimitiveComponent*> PawnComponents;
-			ViewTargetPawn->GetComponents(PawnComponents);
-			AddToHiddenComponents(PawnComponents);
-
-			//// hide weapon too
-			//if (ViewTargetPawn->CurrentWeapon)
-			//{
-			//	TInlineComponentArray<UPrimitiveComponent*> WeaponComponents;
-			//	ViewTargetPawn->CurrentWeapon->GetComponents(WeaponComponents);
-			//	AddToHiddenComponents(WeaponComponents);
-			//}
+			}
 		}
 
-		// we consumed it, reset for next frame
-		bHideViewTargetPawnNextFrame = false;
+		if (bHideForPenetration)
+		{
+			bHideViewTargetPawnNextFrame = false;
+		}
 	}
 }
 

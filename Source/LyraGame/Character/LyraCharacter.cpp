@@ -7,6 +7,7 @@
 #include "Character/LyraHealthComponent.h"
 #include "Character/LyraPawnExtensionComponent.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "LyraCharacterMovementComponent.h"
 #include "LyraGameplayTags.h"
@@ -16,6 +17,7 @@
 #include "Player/LyraPlayerState.h"
 #include "System/LyraSignificanceManager.h"
 #include "TimerManager.h"
+#include "EngineUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(LyraCharacter)
 
@@ -26,6 +28,69 @@ class UInputComponent;
 
 static FName NAME_LyraCharacterCollisionProfile_Capsule(TEXT("LyraPawnCapsule"));
 static FName NAME_LyraCharacterCollisionProfile_Mesh(TEXT("LyraPawnMesh"));
+
+namespace LyraCharacterFirstPersonVisibility
+{
+	static void SetOwnerNoSeeOnActorPrimitives(AActor* Actor, const bool bOwnerNoSee)
+	{
+		if (!Actor)
+		{
+			return;
+		}
+
+		TArray<UPrimitiveComponent*> Primitives;
+		Actor->GetComponents<UPrimitiveComponent>(Primitives);
+		for (UPrimitiveComponent* Prim : Primitives)
+		{
+			if (Prim)
+			{
+				Prim->SetOwnerNoSee(bOwnerNoSee);
+			}
+		}
+	}
+
+	static void ForEachFirstPersonVisibilityActor(ALyraCharacter* Character, TFunctionRef<void(AActor*)> PerActor)
+	{
+		if (!Character)
+		{
+			return;
+		}
+
+		TSet<AActor*> ProcessedActors;
+
+		auto VisitActor = [&ProcessedActors, &PerActor](AActor* Actor)
+		{
+			if (!Actor || ProcessedActors.Contains(Actor))
+			{
+				return;
+			}
+
+			ProcessedActors.Add(Actor);
+			PerActor(Actor);
+		};
+
+		VisitActor(Character);
+
+		TArray<AActor*> AttachedActors;
+		Character->GetAttachedActors(AttachedActors, /*bResetArray=*/true, /*bRecursivelyIncludeAttachedActors=*/true);
+		for (AActor* AttachedActor : AttachedActors)
+		{
+			VisitActor(AttachedActor);
+		}
+
+		if (UWorld* World = Character->GetWorld())
+		{
+			for (TActorIterator<AActor> It(World); It; ++It)
+			{
+				AActor* OwnedActor = *It;
+				if (OwnedActor && OwnedActor->GetOwner() == Character)
+				{
+					VisitActor(OwnedActor);
+				}
+			}
+		}
+	}
+}
 
 ALyraCharacter::ALyraCharacter(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer.SetDefaultSubobjectClass<ULyraCharacterMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -45,6 +110,7 @@ ALyraCharacter::ALyraCharacter(const FObjectInitializer& ObjectInitializer)
 	check(MeshComp);
 	MeshComp->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));  // Rotate mesh to be X forward since it is exported as Y forward.
 	MeshComp->SetCollisionProfileName(NAME_LyraCharacterCollisionProfile_Mesh);
+	MeshComp->SetOwnerNoSee(true);
 
 	ULyraCharacterMovementComponent* LyraMoveComp = CastChecked<ULyraCharacterMovementComponent>(GetCharacterMovement());
 	LyraMoveComp->GravityScale = 1.0f;
@@ -89,6 +155,11 @@ void ALyraCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 
+	if (IsLocallyControlled())
+	{
+		ApplyFirstPersonVisibilityForLocalPlayer();
+	}
+
 	UWorld* World = GetWorld();
 
 	const bool bRegisterWithSignificanceManager = !IsNetMode(NM_DedicatedServer);
@@ -99,6 +170,7 @@ void ALyraCharacter::BeginPlay()
 //@TODO: SignificanceManager->RegisterObject(this, (EFortSignificanceType)SignificanceType);
 		}
 	}
+
 }
 
 void ALyraCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -209,6 +281,41 @@ void ALyraCharacter::OnAbilitySystemUninitialized()
 	HealthComponent->UninitializeFromAbilitySystem();
 }
 
+void ALyraCharacter::ApplyFirstPersonVisibilityForLocalPlayer()
+{
+	if (GetNetMode() == NM_DedicatedServer || !IsLocallyControlled())
+	{
+		return;
+	}
+
+	if (HealthComponent && HealthComponent->IsDeadOrDying())
+	{
+		return;
+	}
+
+	LyraCharacterFirstPersonVisibility::ForEachFirstPersonVisibilityActor(
+		this,
+		[](AActor* Actor)
+		{
+			LyraCharacterFirstPersonVisibility::SetOwnerNoSeeOnActorPrimitives(Actor, /*bOwnerNoSee=*/true);
+		});
+}
+
+void ALyraCharacter::ClearFirstPersonVisibilityForLocalPlayer()
+{
+	if (GetNetMode() == NM_DedicatedServer || !IsLocallyControlled())
+	{
+		return;
+	}
+
+	LyraCharacterFirstPersonVisibility::ForEachFirstPersonVisibilityActor(
+		this,
+		[](AActor* Actor)
+		{
+			LyraCharacterFirstPersonVisibility::SetOwnerNoSeeOnActorPrimitives(Actor, /*bOwnerNoSee=*/false);
+		});
+}
+
 void ALyraCharacter::PossessedBy(AController* NewController)
 {
 	const FGenericTeamId OldTeamID = MyTeamID;
@@ -224,6 +331,24 @@ void ALyraCharacter::PossessedBy(AController* NewController)
 		ControllerAsTeamProvider->GetTeamChangedDelegateChecked().AddDynamic(this, &ThisClass::OnControllerChangedTeam);
 	}
 	ConditionalBroadcastTeamChanged(this, OldTeamID, MyTeamID);
+
+	if (IsLocallyControlled())
+	{
+		ApplyFirstPersonVisibilityForLocalPlayer();
+
+		if (UWorld* World = GetWorld())
+		{
+			FTimerHandle VisibilityTimerHandle;
+			World->GetTimerManager().SetTimer(
+				VisibilityTimerHandle,
+				[this]()
+				{
+					ApplyFirstPersonVisibilityForLocalPlayer();
+				},
+				2.0f,
+				/*bLoop=*/false);
+		}
+	}
 }
 
 void ALyraCharacter::UnPossessed()
@@ -251,6 +376,11 @@ void ALyraCharacter::OnRep_Controller()
 	Super::OnRep_Controller();
 
 	PawnExtComponent->HandleControllerChanged();
+
+	if (IsLocallyControlled())
+	{
+		ApplyFirstPersonVisibilityForLocalPlayer();
+	}
 }
 
 void ALyraCharacter::OnRep_PlayerState()
@@ -339,6 +469,11 @@ void ALyraCharacter::FellOutOfWorld(const class UDamageType& dmgType)
 void ALyraCharacter::OnDeathStarted(AActor*)
 {
 	DisableMovementAndCollision();
+
+	if (IsLocallyControlled())
+	{
+		ClearFirstPersonVisibilityForLocalPlayer();
+	}
 }
 
 void ALyraCharacter::OnDeathFinished(AActor*)

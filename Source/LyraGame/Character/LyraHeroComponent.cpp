@@ -11,6 +11,7 @@
 #include "Character/LyraPawnExtensionComponent.h"
 #include "Character/LyraPawnData.h"
 #include "Character/LyraCharacter.h"
+#include "Character/LyraHealthComponent.h"
 #include "AbilitySystem/LyraAbilitySystemComponent.h"
 #include "Input/LyraInputConfig.h"
 #include "Input/LyraInputComponent.h"
@@ -19,10 +20,55 @@
 #include "Components/GameFrameworkComponentManager.h"
 #include "PlayerMappableInputConfig.h"
 #include "Camera/LyraCameraMode.h"
+#include "HAL/IConsoleManager.h"
+#include "UObject/SoftObjectPath.h"
 #include "UserSettings/EnhancedInputUserSettings.h"
 #include "InputMappingContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(LyraHeroComponent)
+
+namespace LyraHeroFirstPersonCamera
+{
+	static TAutoConsoleVariable<int32> CVarUseFirstPersonCamera(
+		TEXT("lyra.FP.UseFirstPersonCamera"),
+		1,
+		TEXT("When non-zero, pawn data that uses CM_ThirdPerson (or no camera mode) is switched to CM_FirstPerson."));
+
+	static TSubclassOf<ULyraCameraMode> LoadCameraModeClass(const TCHAR* AssetPath)
+	{
+		return TSoftClassPtr<ULyraCameraMode>(FSoftObjectPath(AssetPath)).LoadSynchronous();
+	}
+
+	static TSubclassOf<ULyraCameraMode> GetThirdPersonCameraModeClass()
+	{
+		return LoadCameraModeClass(TEXT("/Game/Characters/Cameras/CM_ThirdPerson.CM_ThirdPerson_C"));
+	}
+
+	static TSubclassOf<ULyraCameraMode> ResolveForFirstPerson(TSubclassOf<ULyraCameraMode> RequestedMode)
+	{
+		if (CVarUseFirstPersonCamera.GetValueOnGameThread() == 0)
+		{
+			return RequestedMode;
+		}
+
+		static TSubclassOf<ULyraCameraMode> ThirdPersonClass = LoadCameraModeClass(
+			TEXT("/Game/Characters/Cameras/CM_ThirdPerson.CM_ThirdPerson_C"));
+		static TSubclassOf<ULyraCameraMode> FirstPersonClass = LoadCameraModeClass(
+			TEXT("/Game/Characters/Cameras/CM_FirstPerson.CM_FirstPerson_C"));
+
+		if (!FirstPersonClass)
+		{
+			return RequestedMode;
+		}
+
+		if (!RequestedMode || RequestedMode == ThirdPersonClass)
+		{
+			return FirstPersonClass;
+		}
+
+		return RequestedMode;
+	}
+}
 
 #if WITH_EDITOR
 #include "Misc/UObjectToken.h"
@@ -470,12 +516,29 @@ void ULyraHeroComponent::Input_AutoRun(const FInputActionValue& InputActionValue
 
 TSubclassOf<ULyraCameraMode> ULyraHeroComponent::DetermineCameraMode() const
 {
+	const APawn* Pawn = GetPawn<APawn>();
+	if (Pawn)
+	{
+		if (const ULyraHealthComponent* HealthComponent = ULyraHealthComponent::FindHealthComponent(Pawn))
+		{
+			if (HealthComponent->IsDeadOrDying())
+			{
+				if (AbilityCameraMode)
+				{
+					return AbilityCameraMode;
+				}
+
+				return LyraHeroFirstPersonCamera::GetThirdPersonCameraModeClass();
+			}
+		}
+	}
+
 	if (AbilityCameraMode)
 	{
+		// Ability overrides (e.g. death) are not remapped to first person.
 		return AbilityCameraMode;
 	}
 
-	const APawn* Pawn = GetPawn<APawn>();
 	if (!Pawn)
 	{
 		return nullptr;
@@ -485,11 +548,11 @@ TSubclassOf<ULyraCameraMode> ULyraHeroComponent::DetermineCameraMode() const
 	{
 		if (const ULyraPawnData* PawnData = PawnExtComp->GetPawnData<ULyraPawnData>())
 		{
-			return PawnData->DefaultCameraMode;
+			return LyraHeroFirstPersonCamera::ResolveForFirstPerson(PawnData->DefaultCameraMode);
 		}
 	}
 
-	return nullptr;
+	return LyraHeroFirstPersonCamera::ResolveForFirstPerson(nullptr);
 }
 
 void ULyraHeroComponent::SetAbilityCameraMode(TSubclassOf<ULyraCameraMode> CameraMode, const FGameplayAbilitySpecHandle& OwningSpecHandle)

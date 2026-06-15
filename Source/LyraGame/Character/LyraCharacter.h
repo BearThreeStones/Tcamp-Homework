@@ -148,6 +148,12 @@ public:
 
 	UE_API virtual bool UpdateSharedReplication();
 
+	/** Hides this pawn's body and attached equipment meshes from the locally controlled player (first person). */
+	UE_API void ApplyFirstPersonVisibilityForLocalPlayer();
+
+	/** Reverses first-person mesh hiding so the local player can see their body (e.g. during death). */
+	UE_API void ClearFirstPersonVisibilityForLocalPlayer();
+
 protected:
 
 	UE_API virtual void OnAbilitySystemInitialized();

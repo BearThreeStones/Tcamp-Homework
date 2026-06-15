@@ -177,7 +177,7 @@
 		},
 		{
 			"Name": "PlayFabParty",
-			"Enabled": true,
+			"Enabled": false,
 			"PlatformAllowList": [
 				"XB1",
 				"XSX",
@@ -199,11 +199,11 @@
 		},
 		{
 			"Name": "OnlineSubsystemSteam",
-			"Enabled": true
+			"Enabled": false
 		},
 		{
 			"Name": "SocketSubsystemSteamIP",
-			"Enabled": true
+			"Enabled": false
 		},
 		{
 			"Name": "GameplayMessageRouter",
@@ -211,7 +211,7 @@
 		},
 		{
 			"Name": "SteamSockets",
-			"Enabled": true
+			"Enabled": false
 		},
 		{
 			"Name": "AssetReferenceRestrictions",

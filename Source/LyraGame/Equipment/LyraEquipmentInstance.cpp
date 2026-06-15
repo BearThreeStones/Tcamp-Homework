@@ -2,6 +2,8 @@
 
 #include "LyraEquipmentInstance.h"
 
+#include "Character/LyraCharacter.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/Character.h"
 #include "LyraEquipmentDefinition.h"
@@ -84,6 +86,27 @@ void ULyraEquipmentInstance::SpawnEquipmentActors(const TArray<FLyraEquipmentAct
 			NewActor->AttachToComponent(AttachTarget, FAttachmentTransformRules::KeepRelativeTransform, SpawnInfo.AttachSocket);
 
 			SpawnedActors.Add(NewActor);
+
+			if (OwningPawn->IsLocallyControlled())
+			{
+				TArray<UPrimitiveComponent*> EquipmentPrimitives;
+				NewActor->GetComponents<UPrimitiveComponent>(EquipmentPrimitives);
+				for (UPrimitiveComponent* Prim : EquipmentPrimitives)
+				{
+					if (Prim)
+					{
+						Prim->SetOwnerNoSee(true);
+					}
+				}
+			}
+		}
+
+		if (OwningPawn->IsLocallyControlled())
+		{
+			if (ALyraCharacter* LyraCharacter = Cast<ALyraCharacter>(OwningPawn))
+			{
+				LyraCharacter->ApplyFirstPersonVisibilityForLocalPlayer();
+			}
 		}
 	}
 }
@@ -111,5 +134,19 @@ void ULyraEquipmentInstance::OnUnequipped()
 
 void ULyraEquipmentInstance::OnRep_Instigator()
 {
+}
+
+void ULyraEquipmentInstance::OnRep_SpawnedActors()
+{
+	if (APawn* OwningPawn = GetPawn())
+	{
+		if (OwningPawn->IsLocallyControlled())
+		{
+			if (ALyraCharacter* LyraCharacter = Cast<ALyraCharacter>(OwningPawn))
+			{
+				LyraCharacter->ApplyFirstPersonVisibilityForLocalPlayer();
+			}
+		}
+	}
 }
 
